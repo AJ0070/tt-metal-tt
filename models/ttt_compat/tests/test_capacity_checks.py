@@ -39,19 +39,20 @@ def test_mixed_batch_that_fits_is_unchanged():
 
 def test_mixed_batch_longest_prompt_without_room_for_generation_is_rejected(expect_error):
     # The shortest prompt fits, so nothing is clipped; the 3900-token prompt plus 200 new tokens needs 4100 > 4096.
-    with expect_error(AssertionError, match="max_generated_tokens"):
+    with expect_error(AssertionError, "max_generated_tokens"):
         _preprocess([100, 3900])
 
 
 def _generator(max_seq_len=512):
     gen = object.__new__(Generator)
+    gen.data_parallel = 1  # Generator.__del__ reads it; object.__new__ skips __init__
     gen.model = [SimpleNamespace(configuration=SimpleNamespace(max_seq_len=max_seq_len))]
     return gen
 
 
 def test_vision_generate_rejects_prompt_plus_generation_past_max_seq_len(expect_error):
     # 400-token prompt + 200 new tokens at max_seq_len 512 decodes up to position 598.
-    with expect_error(ValueError, match="exceeds max_seq_len"):
+    with expect_error(ValueError, "exceeds max_seq_len"):
         next(_generator().generate(None, None, list(range(400)), max_gen_len=200))
 
 
@@ -63,7 +64,7 @@ def test_vision_max_gen_len_is_capped_to_the_remaining_room():
 
 
 def test_vision_prompt_filling_the_cache_is_rejected(expect_error):
-    with expect_error(ValueError, match="no room"):
+    with expect_error(ValueError, "no room"):
         _generator()._cap_max_gen_len(10, 512)
 
 
@@ -74,7 +75,7 @@ def _kv(block_size=64):
 @pytest.mark.parametrize("prompt_len", [1500, 3000])
 def test_page_table_row_narrower_than_the_prompt_is_rejected(prompt_len, expect_error):
     pages = torch.arange(100, 116, dtype=torch.int32).reshape(1, -1)  # 16 blocks of 64 = 1024 tokens
-    with expect_error(ValueError, match="K/V"):
+    with expect_error(ValueError, "K/V"):
         Generator._get_prefill_user_page_table(None, pages, _kv(), prompt_len, prefill_seq_len=2048)
 
 
