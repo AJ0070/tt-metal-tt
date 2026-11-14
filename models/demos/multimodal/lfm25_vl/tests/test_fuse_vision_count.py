@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 Tenstorrent AI ULC
 # SPDX-License-Identifier: Apache-2.0
 
-"""CPU-only check of the placeholder/feature count guard in the vision merge (ttnn is stubbed)."""
+"""CPU-only check of the placeholder/feature count guard in the vision merge of lfm25_vl and gemma3 (ttnn is stubbed)."""
 
 import importlib
 import sys
@@ -11,39 +11,47 @@ from unittest import mock
 import pytest
 import torch
 
-_STUBBED = [
+_COMMON_STUBS = [
     "ttnn",
     "models.tt_transformers",
     "models.tt_transformers.tt",
     "models.tt_transformers.tt.model",
     "models.tt_transformers.tt.generator",
-    "models.demos.multimodal.lfm25_vl.tt.decoder",
-    "models.demos.multimodal.lfm25_vl.tt.vision_model",
+    "models.tt_transformers.tt.common",
 ]
 
+_MODELS = {
+    "lfm25_vl": (
+        "models.demos.multimodal.lfm25_vl.tt.e2e_model",
+        ["models.demos.multimodal.lfm25_vl.tt.decoder", "models.demos.multimodal.lfm25_vl.tt.vision_model"],
+    ),
+    "gemma3": (
+        "models.demos.multimodal.gemma3.tt.gemma_e2e_model",
+        [
+            "models.common.sampling.generator",
+            "models.common.utility_functions",
+            "models.demos.multimodal.gemma3.tt.gemma_vision_model",
+        ],
+    ),
+}
 
-@pytest.fixture(scope="module")
-def e2e_cls():
-    saved = {name: sys.modules.get(name) for name in _STUBBED + ["models.demos.multimodal.lfm25_vl.tt.e2e_model"]}
-    try:
-        for name in _STUBBED:
+
+@pytest.fixture(params=list(_MODELS))
+def e2e_cls(request):
+    module_name, extra_stubs = _MODELS[request.param]
+    # patch.dict restores sys.modules on exit, including every module imported inside the block.
+    with mock.patch.dict("sys.modules"):
+        for name in _COMMON_STUBS + extra_stubs:
             sys.modules[name] = mock.MagicMock()
-        # Real base classes so the model classes are created normally.
         sys.modules["models.tt_transformers.tt.model"].Transformer = type("Transformer", (), {})
         sys.modules["models.tt_transformers.tt.generator"].Generator = type("Generator", (), {})
-        sys.modules.pop("models.demos.multimodal.lfm25_vl.tt.e2e_model", None)
-        module = importlib.import_module("models.demos.multimodal.lfm25_vl.tt.e2e_model")
+        sys.modules.pop(module_name, None)
+        module = importlib.import_module(module_name)
         for obj in vars(module).values():
             if isinstance(obj, type) and "_fuse_vision_into_text_embeddings" in vars(obj):
                 yield obj
                 return
         raise AssertionError("no class defines _fuse_vision_into_text_embeddings")
-    finally:
-        for name, mod in saved.items():
-            if mod is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = mod
 
 
 def _fuse(cls, tokens, features):

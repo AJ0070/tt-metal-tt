@@ -512,13 +512,16 @@ class Qwen36Model:
         )
 
     def _check_vision_row_count(self, token_ids, vision_tokens):
-        """Host-side check that the prompt has exactly one image placeholder per packed vision row
-        (as the non-traced _scatter_vision_tokens does). The per-segment assert in _set_vision_merge
-        only bounds the row range, so surplus rows would be dropped silently. Call before any trace
-        replay or capture; it reads only host token ids and the vision row count."""
+        """Host-side check that the prompt has exactly one image placeholder per packed vision row,
+        mirroring _scatter_vision_tokens: no vision_tokens or no placeholders at all is accepted (the
+        scatter returns early there), any other count mismatch raises. The per-segment assert in
+        _set_vision_merge only bounds the row range, so surplus rows would be dropped silently. Call
+        before any trace replay or capture; it reads only host token ids and the vision row count."""
         if vision_tokens is None:
             return
         n = int((token_ids.reshape(-1) == self._vision_placeholder_token_id()).sum())
+        if n == 0:
+            return
         rows = int(vision_tokens.shape[0])
         if n != rows:
             raise ValueError(f"input_ids has {n} image-token positions but vision_tokens has {rows} rows")
