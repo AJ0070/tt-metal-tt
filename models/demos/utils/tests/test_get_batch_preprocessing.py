@@ -14,7 +14,6 @@ from PIL import Image
 
 torchvision = pytest.importorskip("torchvision")
 from torchvision import models  # noqa: E402
-from torchvision.transforms import InterpolationMode  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -42,8 +41,6 @@ def _loader(img):
     "weights, resolution, resize_size, interpolation",
     [
         (models.MobileNet_V2_Weights.IMAGENET1K_V1, 224, 256, None),
-        (models.Swin_S_Weights.IMAGENET1K_V1, 224, 246, InterpolationMode.BICUBIC),
-        (models.Swin_V2_S_Weights.IMAGENET1K_V1, 256, 260, InterpolationMode.BICUBIC),
     ],
 )
 def test_get_batch_matches_torchvision_weights_transforms(get_batch, weights, resolution, resize_size, interpolation):

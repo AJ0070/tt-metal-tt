@@ -5,7 +5,6 @@
 
 import pytest
 import torch
-from torchvision.transforms import InterpolationMode
 import ttnn
 from tqdm import tqdm
 from models.demos.utils.common_demo_utils import get_batch, get_data_loader, load_imagenet_dataset
@@ -45,9 +44,7 @@ def run_swin_s_demo(
         input_tensors_all = []
         input_labels_all = []
         for iter in tqdm(range(iterations), desc="Preparing images"):
-            inputs, labels = get_batch(
-                data_loader, resolution[0], resize_size=246, interpolation=InterpolationMode.BICUBIC
-            )
+            inputs, labels = get_batch(data_loader, resolution[0])
             input_tensors_all.append(inputs)
             input_labels_all.append(labels)
         logger.info("Processed ImageNet-1k validation Dataset")
