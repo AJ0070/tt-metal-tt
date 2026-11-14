@@ -81,3 +81,11 @@ def test_page_table_row_wide_enough_is_unchanged():
     pages = torch.arange(100, 116, dtype=torch.int32).reshape(1, -1)
     prepared = Generator._get_prefill_user_page_table(None, pages, _kv(), 1000, prefill_seq_len=1024)
     torch.testing.assert_close(prepared, pages)
+
+
+def test_page_table_row_sized_for_the_real_prompt_is_accepted_when_prefill_is_padded():
+    # A 100-token prompt owns 2 blocks of 64; its padded prefill runs 256 tokens (4 blocks). The row only holds the
+    # blocks vLLM allocated for the real prompt, so the check must use the real length and -1 pad the tail.
+    pages = torch.arange(100, 102, dtype=torch.int32).reshape(1, -1)
+    prepared = Generator._get_prefill_user_page_table(None, pages, _kv(), 100, prefill_seq_len=256)
+    assert prepared.tolist() == [[100, 101, -1, -1]]
