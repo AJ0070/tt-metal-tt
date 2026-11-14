@@ -18,10 +18,68 @@ from tests.ttnn.nightly.unit_tests.operations.pool.test_maxpool2d import HS
 from tests.sweep_framework.sweep_utils.pool2d_common import (
     randomize_tensor,
     parse_padding,
+    compute_output_shape,
 )
 
 SliceWidth = ttnn.Op2DDRAMSliceWidth
 SliceHeight = ttnn.Op2DDRAMSliceHeight
+
+
+# helper to correct torch output for asymmetric padding. Kept until test_avgpool2d.py has been run on a device with the
+# updated golden_avg_pool2d (ttnn/ttnn/operations/pool.py), which is meant to make it unnecessary.
+def correct_torch_asym_pad(
+    torch_output, input_shape, kernel_size, stride, padding, divisor_override, count_include_pad, out_h, out_w
+):
+    """Correct torch output for asymmetric padding. Operates directly on (1, 1, NHW, C) format."""
+    in_n, _, in_h, in_w = input_shape
+    pad_t, pad_b, pad_l, pad_r = padding
+    kernel_h, kernel_w = kernel_size
+    stride_h, stride_w = stride
+    padded_h = in_h + pad_t + pad_b
+    padded_w = in_w + pad_l + pad_r
+
+    for n in range(in_n):
+        for oh in range(out_h):
+            for ow in range(out_w):
+                # get the kernel position in the padded input
+                top_left_h = oh * stride_h
+                top_left_w = ow * stride_w
+
+                # count the number of sticks positions in the kernel which should be used in the divisor,
+                # and the number used by torch which is unaware of basic padding since it was applied manually
+                valid_sticks = 0
+                torch_sticks = 0
+                for kh in range(kernel_h):
+                    for kw in range(kernel_w):
+                        # get the padded coordinates of this stick
+                        h = top_left_h + kh
+                        w = top_left_w + kw
+
+                        if h < padded_h and w < padded_w:
+                            # torch is unaware of basic padding but is aware of ceil mode padding and never includes ceil
+                            # mode sticks in the divisor count so only count sticks that are within the basic padded input
+                            torch_sticks += 1
+
+                            # get the non-padded coordinates of this stick
+                            orig_h = h - pad_t
+                            orig_w = w - pad_l
+
+                            # check if this position is should be used in the divisor (within the original input shape)
+                            if 0 <= orig_h < in_h and 0 <= orig_w < in_w:
+                                valid_sticks += 1
+
+                # apply a divisor correction if there's a mismatch between what torch used as divisor
+                # and what should be used based on actual valid sticks
+                if valid_sticks != torch_sticks:
+                    flat_idx = n * out_h * out_w + oh * out_w + ow
+                    if valid_sticks > 0:
+                        torch_output[0, 0, flat_idx, :] *= torch_sticks / valid_sticks
+                    else:
+                        raise ValueError(
+                            "no valid sticks found, cannot correct torch output, it is possible padding is too large for the kernel size so we have an entire kernel in the padded region"
+                        )
+
+    return torch_output
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +112,8 @@ def run_avg_pool2d(
 ):
     in_n, in_c, in_h, in_w = input_shape
     kernel_h, kernel_w = kernel_size
+    stride_h, stride_w = stride
+    dilation_h = dilation_w = 1  # avg pool does not yet support dilation
 
     pad_t, pad_b, pad_l, pad_r, pad_h, pad_w, padding_is_4d = parse_padding(padding)
 
@@ -84,6 +144,22 @@ def run_avg_pool2d(
 
     if (in_h + pad_h) < kernel_h or (in_w + pad_w) < kernel_w:
         pytest.skip("kernel is too large for the padded tensor")
+
+    out_h, out_w, ceil_mode_out_shape_adj = compute_output_shape(
+        in_h,
+        in_w,
+        kernel_h,
+        kernel_w,
+        stride_h,
+        stride_w,
+        dilation_h,
+        dilation_w,
+        pad_h,
+        pad_w,
+        pad_t,
+        pad_l,
+        ceil_mode,
+    )
 
     # using non-zero seed to avoid random spike in floating point error on single element of the
     # 1x256x56x56 tensor with divisor_override=5 and 5x5 kernel resulting in rtol=0.015 for that element
@@ -149,6 +225,14 @@ def run_avg_pool2d(
             config_tensor_in_dram=config_tensor_in_dram,
         )
 
+    # Check if correction will be needed (requires NCHW format)
+    torch_needs_correction = padding_is_4d and divisor_override is None and count_include_pad is False
+
+    if padding_is_4d:
+        assert (
+            not ceil_mode_out_shape_adj
+        ), "current test infrastructure does not support ceil mode output shape adjustments with 4D padding"
+
     # Pass original 2D padding when symmetric, 4D only when originally 4D
     golden_padding = [pad_t, pad_b, pad_l, pad_r] if padding_is_4d else padding
     torch_output = golden_avg_pool2d(
@@ -170,6 +254,20 @@ def run_avg_pool2d(
     # DRAM slicing returns (N, H, W, C) while golden returns (1, 1, NHW, C) - normalize shape
     if ttnn_output.shape != torch_output.shape:
         ttnn_output = ttnn_output.reshape(1, 1, -1, in_c)
+
+    # apply correction to TORCH output for asymmetric padding when needed
+    if torch_needs_correction:
+        torch_output = correct_torch_asym_pad(
+            torch_output,
+            input_shape,
+            kernel_size,
+            stride,
+            (pad_t, pad_b, pad_l, pad_r),
+            divisor_override,
+            count_include_pad,
+            out_h,
+            out_w,
+        )
 
     # test for equivalence
     atol, rtol = torch.testing._comparison.default_tolerances(torch.bfloat16)

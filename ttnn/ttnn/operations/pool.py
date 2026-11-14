@@ -225,6 +225,11 @@ def _golden_avg_pool2d_asymmetric_padding(
     import torch
 
     pad_t, pad_b, pad_l, pad_r = padding
+    # Sums and the division run in float32 and the result is cast once at the end, like the device: the pool compute
+    # kernel accumulates the window in DEST and scales by the per-window 1/divisor scalar before a single pack to the
+    # output dtype, so bf16 inputs are not rounded between the sum and the division.
+    output_dtype = input_nchw.dtype
+    input_nchw = input_nchw.to(torch.float32)
     in_h, in_w = input_nchw.shape[-2:]
     kernel_h, kernel_w = kernel_size
     stride_h, stride_w = stride
@@ -254,7 +259,7 @@ def _golden_avg_pool2d_asymmetric_padding(
 
     sums = window_sums(input_nchw)
     if divisor_override is not None:
-        return sums / divisor_override
+        return (sums / divisor_override).to(output_dtype)
 
     ones = torch.ones((1, 1, in_h, in_w), dtype=input_nchw.dtype)
     valid_count = window_sums(ones)
@@ -269,7 +274,7 @@ def _golden_avg_pool2d_asymmetric_padding(
         )[..., :out_h, :out_w]
     else:
         divisor = valid_count
-    return sums / divisor
+    return (sums / divisor).to(output_dtype)
 
 
 def golden_avg_pool2d(
