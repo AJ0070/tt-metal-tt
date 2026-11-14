@@ -419,6 +419,11 @@ def test_demo(
         profiler.start(f"preprocess_prefill_inputs", iteration=batch_idx)
         text = processor.apply_chat_template(input_prompts, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(input_prompts)
+        if video_inputs:
+            raise ValueError(
+                "video inputs are not supported by the TT Qwen3-VL demo: only image inputs reach the vision tower, "
+                "so video placeholder tokens would be treated as text. Use image or text prompts."
+            )
         inputs = processor(
             text=text,  # [INFO] Qwen3VLProcessor handles the case where text is a string or a list of strings
             images=image_inputs,
