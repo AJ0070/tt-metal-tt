@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from models.ttt_compat.tt import generator as generator_module
 from models.ttt_compat.tt.common import preprocess_inputs_prefill
 from models.ttt_compat.tt.generator import Generator
 
@@ -89,3 +90,38 @@ def test_page_table_row_sized_for_the_real_prompt_is_accepted_when_prefill_is_pa
     pages = torch.arange(100, 102, dtype=torch.int32).reshape(1, -1)
     prepared = Generator._get_prefill_user_page_table(None, pages, _kv(), 100, prefill_seq_len=256)
     assert prepared.tolist() == [[100, 101, -1, -1]]
+
+
+def test_prompt_row_handles_nested_and_flat_input_ids():
+    assert Generator._prompt_row([[1, 2, 3]]) == [1, 2, 3]
+    assert Generator._prompt_row([1, 2, 3]) == [1, 2, 3]
+    assert Generator._prompt_row(torch.tensor([[1, 2, 3]])).tolist() == [1, 2, 3]
+    assert Generator._prompt_row(torch.tensor([1, 2, 3])).tolist() == [1, 2, 3]
+
+
+class _Processor:
+    image_token = "<img>"
+    image_token_id = 7
+
+    def __call__(self, **kwargs):
+        return {"input_ids": [list(range(400))]}
+
+    def decode(self, tokens, skip_special_tokens=True):
+        return ""
+
+
+def test_text_completion_caps_by_the_row_length_of_nested_input_ids(monkeypatch):
+    monkeypatch.setattr(generator_module, "encode_content", lambda content, images, token: content)
+    gen = _generator(max_seq_len=512)
+    gen.processor = _Processor()
+    gen.tokenizer = None
+    seen = {}
+
+    def fake_generate(**kwargs):
+        seen.update(kwargs)
+        return iter(())
+
+    gen.generate = fake_generate
+    gen.text_completion("hello", max_gen_len=500)
+    assert len(seen["prompt_tokens"]) == 400
+    assert seen["max_gen_len"] == 112

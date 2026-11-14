@@ -4144,9 +4144,18 @@ class Generator(ModelCapabilitiesMixin, WarmupForwardMixin):
                 text=text,
             )
 
-    def _cap_max_gen_len(self, max_gen_len, prompt_len):
+    @staticmethod
+    def _prompt_row(input_ids):
+        """The token row of a processor result: processors return [[...]] (or a [1, S] tensor), plain lists are flat."""
+        if len(input_ids) > 0:
+            first = input_ids[0]
+            if isinstance(first, (list, tuple)) or (torch.is_tensor(first) and first.dim() > 0):
+                return first
+        return input_ids
+
+    def _cap_max_gen_len(self, max_gen_len, prompt_len, model_id=0):
         """Cap max_gen_len so prompt_len + max_gen_len fits max_seq_len; raise if the prompt alone does not leave room."""
-        max_seq_len = self.model[0].configuration.max_seq_len
+        max_seq_len = self.model[model_id].configuration.max_seq_len
         room = max_seq_len - prompt_len
         if room <= 0:
             raise ValueError(f"Prompt length {prompt_len} leaves no room to generate within max_seq_len {max_seq_len}")
@@ -4175,7 +4184,7 @@ class Generator(ModelCapabilitiesMixin, WarmupForwardMixin):
         if vision_images is not None:
             vision_mask = create_vision_mask(model_input["input_ids"][0], encoder.image_token_id) or None
 
-        max_gen_len = self._cap_max_gen_len(max_gen_len, len(model_input["input_ids"][0]))
+        max_gen_len = self._cap_max_gen_len(max_gen_len, len(model_input["input_ids"][0]), model_id)
 
         tokens = []
 
@@ -4223,14 +4232,15 @@ class Generator(ModelCapabilitiesMixin, WarmupForwardMixin):
         if vision_images is not None:
             vision_mask = create_vision_mask(model_input["input_ids"][0], self.processor.image_token_id) or None
 
-        max_gen_len = self._cap_max_gen_len(max_gen_len, len(model_input["input_ids"]))
+        prompt_row = self._prompt_row(model_input["input_ids"])
+        max_gen_len = self._cap_max_gen_len(max_gen_len, len(prompt_row), model_id)
 
         tokens = []
 
         for result in self.generate(
             vision_images=vision_images,
             vision_mask=vision_mask,
-            prompt_tokens=model_input["input_ids"],
+            prompt_tokens=prompt_row,
             max_gen_len=max_gen_len,
             temperature=temperature,
             top_p=top_p,
