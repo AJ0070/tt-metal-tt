@@ -179,11 +179,13 @@ def _golden_function(tensor, shape, **_):
 ttnn.attach_golden_function(ttnn.repeat, golden_function=_golden_function)
 
 
-def _golden_function(input_tensor: ttnn.Tensor, scale_factor: Tuple[float, float], **_):
+def _golden_function(input_tensor: ttnn.Tensor, scale_factor: Tuple[float, float], mode="nearest", **_):
     import torch
 
     input_tensor = input_tensor.permute(0, 3, 1, 2)
-    ret = torch.nn.functional.upsample(input_tensor, scale_factor=scale_factor)
+    # The device bilinear path uses half-pixel centers with edge replication (align_corners=False).
+    kwargs = {"align_corners": False} if mode == "bilinear" else {}
+    ret = torch.nn.functional.interpolate(input_tensor, scale_factor=scale_factor, mode=mode, **kwargs)
     ret = ret.permute(0, 2, 3, 1)
     return ret
 
