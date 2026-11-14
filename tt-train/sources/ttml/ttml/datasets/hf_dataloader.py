@@ -101,6 +101,8 @@ def sft_collate_fn(
       (prompt + completion concatenated).
     * ``"labels"`` — list of token IDs the same length as ``input_ids``,
       where prompt positions are set to ``-100`` (loss is not computed there).
+      ``labels[t]`` is scored against the logits at position ``t`` and is not
+      shifted here, so it must already be the next-token target of ``input_ids[t]``.
 
     The function:
 
