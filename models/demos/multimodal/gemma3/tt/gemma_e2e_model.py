@@ -116,6 +116,10 @@ class TtGemmaModel(Transformer):
 
     def _fuse_vision_into_text_embeddings(self, pt_tokens, tokens_embd, image_features: torch.Tensor):
         special_image_mask = (pt_tokens == self.args.image_token_index).unsqueeze(-1)
+        n_tokens = int(special_image_mask.sum())
+        n_features = image_features.numel() // image_features.shape[-1]
+        if n_tokens != n_features:
+            raise ValueError(f"Image features and image tokens do not match: tokens: {n_tokens}, features {n_features}")
         special_image_mask = special_image_mask.expand_as(tokens_embd)
         image_features = image_features.to(tokens_embd.device, tokens_embd.dtype)
         return tokens_embd.masked_scatter(special_image_mask, image_features)
